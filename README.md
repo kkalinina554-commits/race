@@ -1,2 +1,2 @@
 # race
-race in python
+race in browser
