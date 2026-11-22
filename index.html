@@ -40,6 +40,11 @@
   #overlay h1 { font-size:32px; letter-spacing:2px; }
   #overlay .hint { font-size:14px; opacity:.8; line-height:1.6; max-width:420px; }
   #trackSel { display:flex; flex-direction:column; gap:10px; margin-top:6px; }
+  #diffSel { display:flex; gap:8px; justify-content:center; }
+  .diffBtn { background:rgba(255,255,255,.12); border:2px solid rgba(255,255,255,.35); color:#fff;
+    border-radius:10px; padding:9px 18px; font-size:15px; font-weight:800; cursor:pointer; }
+  .diffBtn.on { background:#1d4ed8; border-color:#3b82f6; }
+  .diffBtn:active { transform:scale(.97); }
   .trackBtn { background:linear-gradient(135deg,#1d4ed8,#2563eb); color:#fff; border:none;
     border-radius:14px; padding:14px 30px; font-size:18px; font-weight:800; cursor:pointer; min-width:260px; }
   .trackBtn:active { transform:scale(.97); }
@@ -77,11 +82,16 @@
 
 <div id="overlay">
   <h1>МИКРО-ГОНКА</h1>
+  <div id="diffSel">
+    <button class="diffBtn" data-diff="easy">🐢 ЛЕГКО</button>
+    <button class="diffBtn on" data-diff="norm">🏎 НОРМА</button>
+    <button class="diffBtn" data-diff="hard">🔥 ХАРД</button>
+  </div>
   <div id="trackSel">
     <button class="trackBtn" data-track="circuit">🏁 КОЛЬЦО — заезд на 3 круга</button>
     <button class="trackBtn" data-track="sprint">🚀 СПРИНТ — до флага, в один конец</button>
   </div>
-  <p class="hint">ПК: стрелки или WASD.<br>Телефон: кнопки ◀ ▶ и газ/тормоз.<br>С травы — медленно! Соперники рвутся вперёд, но дальше круга не убегут.</p>
+  <p class="hint">ПК: стрелки или WASD.<br>Телефон: кнопки ◀ ▶ и газ/тормоз.<br>С травы — медленно! Выбери сложность и жми трассу.</p>
   <div id="bigMsg"></div>
   <button id="restartBtn">ЕЩЁ РАЗ</button>
   <button id="menuBtn">СМЕНИТЬ ТРАССУ</button>
@@ -226,6 +236,16 @@ function onRoad(x, y) {
   return T.maskData[(yi*T.worldW + xi)*4] > 100;
 }
 
+/* ================= уровни сложности ================= */
+const DIFFS = {
+  easy: { base: 190, spread: 15, cornerK: 0.75, cap: 150, chaseBase: 15, chaseMax: 70 },
+  norm: { base: 345, spread: 15, cornerK: 0.45, cap: 260, chaseBase: 25, chaseMax: 100 },
+  hard: { base: 400, spread: 25, cornerK: 0.35, cap: 320, chaseBase: 35, chaseMax: 120 }
+};
+let diffName = localStorage.getItem('racer_diff') || 'norm';
+if (!DIFFS[diffName]) diffName = 'norm';
+let D = DIFFS[diffName];
+
 /* ================= машины ================= */
 function makeRacer(color, gridSlot, isPlayer) {
   const closed = T.closed;
@@ -241,7 +261,7 @@ function makeRacer(color, gridSlot, isPlayer) {
     speed: 0,
     idx, totalProg: closed ? -12 - gridSlot*7 : idx,
     completed: 0, nextCp: 1,
-    lateral: off, baseLat: off, vmax: isPlayer ? 0 : (365 + Math.random()*20),
+    lateral: off, baseLat: off, vmax: isPlayer ? 0 : (D.base + Math.random()*D.spread),
     lapStart: 0
   };
 }
@@ -292,6 +312,19 @@ function selectTrack(kind) {
 }
 document.querySelectorAll('.trackBtn').forEach(b =>
   b.addEventListener('click', () => selectTrack(b.dataset.track)));
+const diffSel = $('diffSel');
+function paintDiff() {
+  diffSel.querySelectorAll('.diffBtn').forEach(b =>
+    b.classList.toggle('on', b.dataset.diff === diffName));
+}
+diffSel.querySelectorAll('.diffBtn').forEach(b =>
+  b.addEventListener('click', () => {
+    diffName = b.dataset.diff;
+    D = DIFFS[diffName];
+    localStorage.setItem('racer_diff', diffName);
+    paintDiff();
+  }));
+paintDiff();
 restartBtn.addEventListener('click', () => startCountdown());
 menuBtn.addEventListener('click', showMenu);
 
@@ -299,6 +332,7 @@ function showMenu() {
   state = 'menu';
   overlay.style.display = 'flex';
   trackSel.style.display = 'flex';
+  diffSel.style.display = 'flex';
   restartBtn.classList.remove('show');
   menuBtn.classList.remove('show');
   bigMsg.textContent = '';
@@ -353,27 +387,27 @@ function updatePlayer(dt) {
 }
 
 /* ================= БИ ================= */
-const CAP = 260;        // дальше этого (в точках трассы) боты не убегают
 function updateAI(ai, dt) {
-  if (state !== 'race') return;
+  if (state !== 'race' && state !== 'finished') return;                        // после финиша игрока боты продолжают гонку
   const i = Math.floor(ai.idx);
   const l1 = T.closed ? (i + 16) % T.N : Math.min(T.N - 1, i + 16);
   const l2 = T.closed ? (i + 34) % T.N : Math.min(T.N - 1, i + 34);
   const a1 = Math.atan2(T.tang[i].y, T.tang[i].x);
   const a2 = Math.atan2(T.pts[l2].y - T.pts[l1].y, T.pts[l2].x - T.pts[l1].x);
   const curv = Math.abs(normAngle(a1 - a2));
-  const cornerT = ai.vmax / (1 + curv*0.6);
+  const cornerT = ai.vmax / (1 + curv*D.cornerK);
   const gap = ai.totalProg - player.totalProg;
   const distP = Math.hypot(ai.x - player.x, ai.y - player.y);
   let target = cornerT;
   if (gap < -50) {
-    const chase = Math.min(100, -gap*0.25);
-    target = Math.max(target, Math.min(cornerT, player.speed) + 25 + chase);   // догоняет и пытается вырваться
-  } else if (gap > 100) {
-    target = Math.min(target, player.speed + 20);                              // уезжает потихоньку
+    const chase = Math.min(D.chaseMax, -gap*0.25);
+    target = Math.max(target, Math.min(cornerT, player.speed) + D.chaseBase + chase);   // догоняет и пытается вырваться
+  } else if (gap > 5) {
+    target = gap > 100 ? Math.min(target, player.speed + 20)                   // далеко впереди — потихоньку
+                       : Math.max(target, player.speed);                       // чуть впереди — темп не сбавляем
   }
-  if (gap > CAP - 60) {                                                        // самокорректирующийся потолок отрыва
-    const room = Math.max(0, (CAP + 40) - gap);
+  if (gap > D.cap - 60) {                                                      // самокорректирующийся потолок отрыва
+    const room = Math.max(0, (D.cap + 40) - gap);
     target = room > 0 ? Math.min(target, player.speed + room*0.25)
                       : Math.min(target, player.speed * 0.5);
   }
@@ -385,11 +419,9 @@ function updateAI(ai, dt) {
   const playLat = relX*T.norm[jj].x + relY*T.norm[jj].y;
   const LANE = T.roadW*0.27;
   let wantLat = ai.baseLat;
-  if (distP < 80 && gap < -5) {
+  if (distP < 80 && gap < 5) {
     wantLat = playLat > 0 ? -LANE : LANE;                                      // объезд со свободной стороны
-    target = Math.min(target, Math.max(player.speed + 20, Math.min(cornerT, player.speed + 40)));
-  } else if (distP < 60 && Math.abs(gap) <= 5) {
-    target = Math.min(target, player.speed + 4);                               // бок о бок — держим темп
+    target = Math.min(ai.vmax, Math.max(cornerT, player.speed + 60));                            // решительный рывок на обгон
   }
   ai.lateral += (wantLat - ai.lateral) * Math.min(1, 6*dt);
 
@@ -481,7 +513,7 @@ function separateCars(dt) {
       o.lateral = clamp(o.lateral - latPush, -T.roadW*0.4, T.roadW*0.4);
       o.x = T.pts[j].x + T.norm[j].x*o.lateral;
       o.y = T.pts[j].y + T.norm[j].y*o.lateral;
-      o.speed *= 1 - 3*dt;                                                     // бот тоже страдает от контакта
+      if (d < 20) o.speed *= 1 - 3*dt;                                         // штраф боту — только за прямой таран
       player.speed *= 1 - 1.5*dt;
     }
   }
@@ -680,6 +712,7 @@ function showResults() {
   h1El.style.display = 'none';
   hintEl.style.display = 'none';
   trackSel.style.display = 'none';
+  diffSel.style.display = 'none';
   restartBtn.classList.add('show');
   menuBtn.classList.add('show');
   bigMsg.style.fontSize = '48px';
