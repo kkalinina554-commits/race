@@ -254,7 +254,7 @@ function onRoad(x, y) {
 /* ================= уровни сложности ================= */
 const DIFFS = {
   easy: { base: 190, spread: 15, cornerK: 0.75, cap: 150, chaseBase: 15, chaseMax: 70 },
-  norm: { base: 270, spread: 8, cornerK: 0.85, cap: 120, chaseBase: 20, chaseMax: 70 },
+  norm: { base: 310, spread: 8, cornerK: 0.65, cap: 160, chaseBase: 20, chaseMax: 70 },
   hard: { base: 400, spread: 25, cornerK: 0.35, cap: 320, chaseBase: 35, chaseMax: 120 }
 };
 let diffName = localStorage.getItem('racer_diff') || 'norm';
@@ -325,6 +325,7 @@ const hintEl = document.querySelector('#overlay .hint');
 
 function selectTrack(kind) {
   T = buildTrack(kind);
+  buildMinimap();
   localStorage.setItem('racer_track', kind);
   startCountdown();
 }
@@ -739,22 +740,34 @@ function build3DScene() {
     const cab = new THREE.Mesh(cabG, glassM);
     cab.position.set(-2, 11.5, 0);
     grp.add(body); grp.add(cab);
+    const wheels = [], front = [];
     for (const wx of [-10, 10]) for (const wz of [-8.5, 8.5]) {
       const w = new THREE.Mesh(wheelG, wheelM);
-      w.position.set(wx, 4, wz);
-      grp.add(w);
+      if (wx === 10) {
+        const st = new THREE.Group();
+        st.position.set(wx, 4, wz);
+        st.add(w);
+        grp.add(st);
+        front.push(st);
+      } else {
+        w.position.set(wx, 4, wz);
+        grp.add(w);
+      }
+      wheels.push(w);
     }
     grp.position.set(r.x, 0, r.y);
     grp.rotation.y = -r.angle;
     world.add(grp);
-    cars.push(grp);
+    cars.push({ grp, wheels, front });
   }
 
   r3.scene.add(world);
   r3.track = world;
   r3.cars = cars;
+  steerVis = 0;
 }
 
+let steerVis = 0;
 function render3D(dt) {
   const k = Math.min(1, 6*dt);
   const dirX = Math.cos(player.angle), dirZ = Math.sin(player.angle);
@@ -762,10 +775,21 @@ function render3D(dt) {
   r3.camera.position.lerp(
     new THREE.Vector3(player.x - dirX*(72 + sp*0.075), 28 + sp*0.05, player.y - dirZ*(72 + sp*0.075)), k);
   r3.camera.lookAt(player.x + dirX*40, 5, player.y + dirZ*40);
+  const left = keys.ArrowLeft || keys.KeyA || btnState.L;
+  const right = keys.ArrowRight || keys.KeyD || btnState.R;
+  const steerIn = ((right?1:0) - (left?1:0)) * 0.45;
+  steerVis += (steerIn - steerVis) * Math.min(1, 10*dt);
   for (let i = 0; i < r3.cars.length; i++) {
-    const m = r3.cars[i], rr = racers[i];
-    m.position.set(rr.x, 0, rr.y);
-    m.rotation.y = -rr.angle;
+    const car = r3.cars[i], rr = racers[i];
+    car.grp.position.set(rr.x, 0, rr.y);
+    car.grp.rotation.y = -rr.angle;
+    let sa = steerVis;
+    if (!rr.isPlayer) {
+      const tAng = Math.atan2(T.tang[(rr.idx|0) % T.N].y, T.tang[(rr.idx|0) % T.N].x);
+      sa = Math.max(-0.45, Math.min(0.45, normAngle(tAng - rr.angle) * 2));
+    }
+    for (const st of car.front) st.rotation.y = -sa;
+    for (const w of car.wheels) w.rotation.z = (w.rotation.z || 0) - sp*dt/4;
   }
   r3.renderer.render(r3.scene, r3.camera);
 }
