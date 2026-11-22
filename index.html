@@ -239,7 +239,7 @@ function onRoad(x, y) {
 /* ================= уровни сложности ================= */
 const DIFFS = {
   easy: { base: 190, spread: 15, cornerK: 0.75, cap: 150, chaseBase: 15, chaseMax: 70 },
-  norm: { base: 365, spread: 15, cornerK: 0.6, cap: 260, chaseBase: 25, chaseMax: 100 },
+  norm: { base: 345, spread: 10, cornerK: 0.6, cap: 220, chaseBase: 30, chaseMax: 110 },
   hard: { base: 400, spread: 25, cornerK: 0.35, cap: 320, chaseBase: 35, chaseMax: 120 }
 };
 let diffName = localStorage.getItem('racer_diff') || 'norm';
