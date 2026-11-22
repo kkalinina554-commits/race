@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Гонка В Браузере</title>
+<title>Микро-Гонка</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body { width:100%; height:100%; overflow:hidden; background:#0d1420; touch-action:none;
@@ -41,6 +41,14 @@
   #overlay .hint { font-size:14px; opacity:.8; line-height:1.6; max-width:420px; }
   #trackSel { display:flex; flex-direction:column; gap:10px; margin-top:6px; }
   #diffSel { display:flex; gap:8px; justify-content:center; }
+  #modeSel { display:flex; gap:8px; justify-content:center; }
+  .modeBtn { background:rgba(255,255,255,.12); border:2px solid rgba(255,255,255,.35); color:#fff;
+    border-radius:10px; padding:9px 18px; font-size:15px; font-weight:800; cursor:pointer; }
+  .modeBtn.on { background:#0f766e; border-color:#14b8a6; }
+  .modeBtn:active { transform:scale(.97); }
+  #game3d { position:fixed; inset:0; width:100%; height:100%; display:none; }
+  #flashTxt { position:fixed; top:26%; left:0; right:0; text-align:center; z-index:7; pointer-events:none;
+    color:#fff; font:800 30px 'Segoe UI',sans-serif; text-shadow:0 2px 6px rgba(0,0,0,.8); opacity:0; }
   .diffBtn { background:rgba(255,255,255,.12); border:2px solid rgba(255,255,255,.35); color:#fff;
     border-radius:10px; padding:9px 18px; font-size:15px; font-weight:800; cursor:pointer; }
   .diffBtn.on { background:#1d4ed8; border-color:#3b82f6; }
@@ -59,6 +67,7 @@
 </head>
 <body>
 <canvas id="game"></canvas>
+<canvas id="game3d"></canvas>
 <canvas id="minimap" width="120" height="92"></canvas>
 
 <div id="hud">
@@ -68,6 +77,7 @@
 </div>
 <canvas id="dash" width="340" height="216"></canvas>
 <button id="resetBtn" title="На трассу">⟳</button>
+<div id="flashTxt"></div>
 
 <div id="controls">
   <div class="cluster">
@@ -87,16 +97,21 @@
     <button class="diffBtn on" data-diff="norm">🏎 НОРМА</button>
     <button class="diffBtn" data-diff="hard">🔥 ХАРД</button>
   </div>
+  <div id="modeSel">
+    <button class="modeBtn on" data-mode="2d">🕹 ВИД СВЕРХУ</button>
+    <button class="modeBtn" data-mode="3d">🏔 3D</button>
+  </div>
   <div id="trackSel">
     <button class="trackBtn" data-track="circuit">🏁 КОЛЬЦО — заезд на 3 круга</button>
     <button class="trackBtn" data-track="sprint">🚀 СПРИНТ — до флага, в один конец</button>
   </div>
-  <p class="hint">ПК: стрелки или WASD.<br>Телефон: кнопки ◀ ▶ и газ/тормоз.<br>С травы — медленно! Выбери сложность и жми трассу.</p>
+  <p class="hint">ПК: стрелки или WASD.<br>Телефон: кнопки ◀ ▶ и газ/тормоз.<br>С травы — медленно! Выбери режим, сложность и жми трассу.</p>
   <div id="bigMsg"></div>
   <button id="restartBtn">ЕЩЁ РАЗ</button>
   <button id="menuBtn">СМЕНИТЬ ТРАССУ</button>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
 <script>
 (() => {
 'use strict';
@@ -245,6 +260,9 @@ const DIFFS = {
 let diffName = localStorage.getItem('racer_diff') || 'norm';
 if (!DIFFS[diffName]) diffName = 'norm';
 let D = DIFFS[diffName];
+let modeName = localStorage.getItem('racer_mode') || '2d';
+if (modeName !== '3d') modeName = '2d';
+let use3d = false, r3 = null;
 
 /* ================= машины ================= */
 function makeRacer(color, gridSlot, isPlayer) {
@@ -300,7 +318,7 @@ if (!('ontouchstart' in window)) document.body.classList.add('desktop');
 
 /* ================= элементы HUD ================= */
 const $ = id => document.getElementById(id);
-const overlay = $('overlay'), bigMsg = $('bigMsg');
+const overlay = $('overlay'), bigMsg = $('bigMsg'), flashTxtEl = $('flashTxt');
 const trackSel = $('trackSel'), restartBtn = $('restartBtn'), menuBtn = $('menuBtn');
 const h1El = document.querySelector('#overlay h1');
 const hintEl = document.querySelector('#overlay .hint');
@@ -325,14 +343,30 @@ diffSel.querySelectorAll('.diffBtn').forEach(b =>
     paintDiff();
   }));
 paintDiff();
+const modeSel = $('modeSel');
+function paintMode() {
+  modeSel.querySelectorAll('.modeBtn').forEach(b =>
+    b.classList.toggle('on', b.dataset.mode === modeName));
+}
+modeSel.querySelectorAll('.modeBtn').forEach(b =>
+  b.addEventListener('click', () => {
+    modeName = b.dataset.mode;
+    localStorage.setItem('racer_mode', modeName);
+    paintMode();
+  }));
+paintMode();
 restartBtn.addEventListener('click', () => startCountdown());
 menuBtn.addEventListener('click', showMenu);
 
 function showMenu() {
   state = 'menu';
+  use3d = false;
+  $('game').style.display = 'block';
+  $('game3d').style.display = 'none';
   overlay.style.display = 'flex';
   trackSel.style.display = 'flex';
   diffSel.style.display = 'flex';
+  modeSel.style.display = 'flex';
   restartBtn.classList.remove('show');
   menuBtn.classList.remove('show');
   bigMsg.textContent = '';
@@ -341,6 +375,11 @@ function showMenu() {
 }
 function startCountdown() {
   resetRace();
+  use3d = modeName === '3d' && typeof THREE !== 'undefined';
+  if (modeName === '3d' && !use3d) flash('3D-движок не загрузился (нужен интернет) — вид сверху');
+  $('game').style.display = use3d ? 'none' : 'block';
+  $('game3d').style.display = use3d ? 'block' : 'none';
+  if (use3d) { init3D(); build3DScene(); }
   state = 'countdown'; countdownT = 3.6;
   overlay.style.display = 'none';
 }
@@ -533,6 +572,11 @@ function resize() {
   canvas.style.width = innerWidth+'px'; canvas.style.height = innerHeight+'px';
   ctx.setTransform(dpr,0,0,dpr,0,0);
   zoom = clamp(Math.min(innerWidth, innerHeight)/900, 0.3, 1.4);
+  if (r3) {
+    r3.renderer.setSize(innerWidth, innerHeight, false);
+    r3.camera.aspect = innerWidth/innerHeight;
+    r3.camera.updateProjectionMatrix();
+  }
 }
 addEventListener('resize', resize);
 resize();
@@ -577,6 +621,153 @@ function drawCarTop(r) {
   ctx.fillRect(w*0.32, -h*0.38, 3, 3);
   ctx.fillRect(w*0.32, h*0.38 - 3, 3, 3);
   ctx.restore();
+}
+
+/* ================= 3D режим (three.js) ================= */
+function init3D() {
+  if (r3) return;
+  const renderer = new THREE.WebGLRenderer({ canvas: $('game3d'), antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+  renderer.setSize(innerWidth, innerHeight, false);
+  renderer.setClearColor(0x87ceeb);
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0x87ceeb, 700, 3000);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+  sun.position.set(0.6, 1, 0.4).multiplyScalar(1000);
+  scene.add(sun);
+  const camera = new THREE.PerspectiveCamera(72, innerWidth/innerHeight, 1, 6000);
+  camera.position.set(player.x, 60, player.y + 90);
+  r3 = { renderer, scene, camera, track: null, cars: [] };
+}
+
+function quad(vals, i, j, oA, oB, lift) {
+  const p = T.pts[i], q = T.pts[j], np = T.norm[i], nq = T.norm[j];
+  vals.push(
+    p.x + np.x*oA, lift, p.y + np.y*oA,
+    p.x + np.x*oB, lift, p.y + np.y*oB,
+    q.x + nq.x*oA, lift, q.y + nq.y*oA,
+    p.x + np.x*oB, lift, p.y + np.y*oB,
+    q.x + nq.x*oB, lift, q.y + nq.y*oB,
+    q.x + nq.x*oA, lift, q.y + nq.y*oA
+  );
+}
+
+function build3DScene() {
+  if (r3.track) r3.scene.remove(r3.track);
+  const world = new THREE.Group();
+
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(T.worldW*1.7, T.worldH*1.7),
+    new THREE.MeshLambertMaterial({ color: 0x3d7a33, side: THREE.DoubleSide }));
+  ground.rotation.x = -Math.PI/2;
+  ground.position.set(T.worldW/2, 0, T.worldH/2);
+  world.add(ground);
+
+  const road = [], edgeL = [], edgeR = [], dash = [];
+  const last = T.closed ? T.N : T.N - 1;
+  const hw = T.roadW/2;
+  for (let i = 0; i < last; i++) {
+    const j = i + 1 < T.N ? i + 1 : 0;
+    quad(road, i, j, -hw, hw, 0.05);
+    quad(edgeL, i, j, -hw-3, -hw, 0.08);
+    quad(edgeR, i, j, hw, hw+3, 0.08);
+  }
+  for (let i = 0; i < last; i += 8) {
+    let j;
+    if (T.closed) j = (i + 3) % T.N;
+    else { j = Math.min(i + 3, T.N - 1); if (j <= i) continue; }
+    quad(dash, i, j, -1.4, 1.4, 0.09);
+  }
+  const mk = (vals, mat) => {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vals), 3));
+    geo.computeVertexNormals();
+    return new THREE.Mesh(geo, mat);
+  };
+  world.add(mk(road, new THREE.MeshLambertMaterial({ color: 0x454a52, side: THREE.DoubleSide })));
+  world.add(mk(edgeL, new THREE.MeshBasicMaterial({ color: 0xdfe2e6, side: THREE.DoubleSide })));
+  world.add(mk(edgeR, new THREE.MeshBasicMaterial({ color: 0xdfe2e6, side: THREE.DoubleSide })));
+  world.add(mk(dash, new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide })));
+
+  const cc = document.createElement('canvas');
+  cc.width = 160; cc.height = 20;
+  const cg = cc.getContext('2d');
+  for (let cx2 = 0; cx2 < 8; cx2++)
+    for (let cy2 = 0; cy2 < 2; cy2++) {
+      cg.fillStyle = (cx2 + cy2) % 2 ? '#000000' : '#ffffff';
+      cg.fillRect(cx2*20, cy2*10, 20, 10);
+    }
+  const finG = new THREE.Group();
+  finG.position.set(T.pts[T.finishIdx].x, 0.12, T.pts[T.finishIdx].y);
+  finG.rotation.y = -Math.atan2(T.norm[T.finishIdx].y, T.norm[T.finishIdx].x);
+  const finPlane = new THREE.Mesh(
+    new THREE.PlaneGeometry(T.roadW, 20),
+    new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cc), side: THREE.DoubleSide }));
+  finPlane.rotation.x = -Math.PI/2;
+  finG.add(finPlane);
+  world.add(finG);
+
+  const trunkG = new THREE.CylinderGeometry(3, 4, 16, 6);
+  const leafG = new THREE.ConeGeometry(11, 26, 7);
+  const trunkM = new THREE.MeshLambertMaterial({ color: 0x6b4a2f });
+  const leafM = new THREE.MeshLambertMaterial({ color: 0x2e6b28 });
+  for (let i = 10; i < last; i += 14) {
+    const p = T.pts[i], np2 = T.norm[i];
+    const side = (i/14) % 2 ? 1 : -1;
+    const off = T.roadW/2 + 36 + Math.random()*130;
+    const s = 0.8 + Math.random()*0.9;
+    const tr = new THREE.Group();
+    tr.position.set(p.x + np2.x*side*off, 0, p.y + np2.y*side*off);
+    tr.scale.set(s, s, s);
+    const t1 = new THREE.Mesh(trunkG, trunkM); t1.position.y = 8;
+    const t2 = new THREE.Mesh(leafG, leafM); t2.position.y = 27;
+    tr.add(t1); tr.add(t2);
+    world.add(tr);
+  }
+
+  const cars = [];
+  const bodyG = new THREE.BoxGeometry(30, 9, 17);
+  const cabG = new THREE.BoxGeometry(13, 7, 13);
+  const wheelG = new THREE.BoxGeometry(9, 8, 6);
+  const glassM = new THREE.MeshLambertMaterial({ color: 0x14202f });
+  const wheelM = new THREE.MeshLambertMaterial({ color: 0x111318 });
+  for (const r of racers) {
+    const grp = new THREE.Group();
+    const body = new THREE.Mesh(bodyG, new THREE.MeshLambertMaterial({ color: r.color }));
+    body.position.y = 6.5;
+    const cab = new THREE.Mesh(cabG, glassM);
+    cab.position.set(-2, 11.5, 0);
+    grp.add(body); grp.add(cab);
+    for (const wx of [-10, 10]) for (const wz of [-8.5, 8.5]) {
+      const w = new THREE.Mesh(wheelG, wheelM);
+      w.position.set(wx, 4, wz);
+      grp.add(w);
+    }
+    grp.position.set(r.x, 0, r.y);
+    grp.rotation.y = -r.angle;
+    world.add(grp);
+    cars.push(grp);
+  }
+
+  r3.scene.add(world);
+  r3.track = world;
+  r3.cars = cars;
+}
+
+function render3D(dt) {
+  const k = Math.min(1, 6*dt);
+  const dirX = Math.cos(player.angle), dirZ = Math.sin(player.angle);
+  const sp = Math.abs(player.speed);
+  r3.camera.position.lerp(
+    new THREE.Vector3(player.x - dirX*(72 + sp*0.075), 28 + sp*0.05, player.y - dirZ*(72 + sp*0.075)), k);
+  r3.camera.lookAt(player.x + dirX*40, 5, player.y + dirZ*40);
+  for (let i = 0; i < r3.cars.length; i++) {
+    const m = r3.cars[i], rr = racers[i];
+    m.position.set(rr.x, 0, rr.y);
+    m.rotation.y = -rr.angle;
+  }
+  r3.renderer.render(r3.scene, r3.camera);
 }
 
 /* ================= мини-карта ================= */
@@ -713,6 +904,7 @@ function showResults() {
   hintEl.style.display = 'none';
   trackSel.style.display = 'none';
   diffSel.style.display = 'none';
+  modeSel.style.display = 'none';
   restartBtn.classList.add('show');
   menuBtn.classList.add('show');
   bigMsg.style.fontSize = '48px';
@@ -759,16 +951,12 @@ function loop(nowMs) {
   }
 
   if (state !== 'menu') {
-    render2D(dt);
+    if (use3d) render3D(dt); else render2D(dt);
     renderMinimap();
     drawDash();
     updateHud(now);
-    if (flashT > 0) {
-      ctx.font = '800 30px Segoe UI, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(255,255,255,' + Math.min(1, flashT) + ')';
-      ctx.fillText(flashTxt, innerWidth/2, innerHeight*0.3);
-    }
+    flashTxtEl.textContent = flashTxt;
+    flashTxtEl.style.opacity = flashT > 0 ? Math.min(1, flashT) : 0;
   }
 
   requestAnimationFrame(loop);
